@@ -1,0 +1,13 @@
+{
+  "domain": "sapir_parking",
+  "name": "Sapir Parking",
+  "documentation": "https://github.com/epopcop/sapir_parking",
+  "issue_tracker": "https://github.com/epopcop/sapir_parking/issues",
+  "dependencies": [],
+  "config_flow": true,
+  "codeowners": ["@enden"],
+  "requirements": [
+    "beautifulsoup4==4.13.3"
+  ],
+  "version": "0.0.1"
+}

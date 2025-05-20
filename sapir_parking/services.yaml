@@ -1,0 +1,34 @@
+get_available_spots:
+  fields:
+    Date:
+      required: false
+      example: "2025-12-25"
+      selector:
+        date:
+release_parking_spot:
+  fields:
+    Date:
+      required: false
+      example: "2025-12-25"
+      selector:
+        date:
+reserve_parking_spot:
+  fields:
+    Date:
+      required: false
+      example: "2025-12-25"
+      selector:
+        date:
+    parking_id:
+      required: true
+      example: "123"
+      selector:
+        text:
+          type: number
+get_status:
+  fields:
+    Date:
+      required: false
+      example: "2025-12-25"
+      selector:
+        date:
