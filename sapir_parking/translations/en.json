@@ -1,0 +1,49 @@
+{
+    "title": "Sapir Parking",
+    "services": {
+        "get_available_spots": {
+            "description": "Lists all parking spots in the Sapir Parking system.",
+            "fields": {
+                "date": {
+                    "description": "Return available parking spots in a specific date, only supports today and tomorrow.",
+                    "name": "Date"
+                }
+            },
+            "name": "Get Available Spots"
+        },
+        "get_status": {
+            "description": "Get the current parking status.",
+            "fields": {
+                "date": {
+                    "description": "Return status of a specific date, only supports today and tomorrow.",
+                    "name": "Date"
+                }
+            },
+            "name": "Get Status"
+        },
+        "release_parking_spot": {
+            "description": "Release the reserved parking spot.",
+            "fields": {
+                "date": {
+                    "description": "Release the reseved parkingn spot on a specific date, only supports today and tomorrow.",
+                    "name": "Date"
+                }
+            },
+            "name": "Release Parking Spot"
+        },
+        "reserve_parking_spot": {
+            "description": "Reserve a parking spot.",
+            "fields": {
+                "date": {
+                    "description": "Reserve a parking spot on a specific date, only supports today and tomorrow.",
+                    "name": "Date"
+                },
+                "parking_id": {
+                    "description": "The ID of the parking spot to reserve.",
+                    "name": "Parking ID"
+                }
+            },
+            "name": "Reserve Parking Spot"
+        }
+    }
+}

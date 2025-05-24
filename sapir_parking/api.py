@@ -1,6 +1,5 @@
 """Sample API Client."""
 
-import asyncio
 import dataclasses
 import datetime as dt
 import logging
@@ -13,7 +12,6 @@ from .const import DATE_FORMAT
 
 TIMEOUT = 10
 
-
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
 HEADERS = {
@@ -21,28 +19,32 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
 }
 BASE_URL = "https://sapirparking.com/employee"
+LOGIN_URL = f"{BASE_URL}/login"
 ADD_SCHEDULE_URL = f"{BASE_URL}/schedule/add"
 REMOVE_SCHEDULE_URL = f"{BASE_URL}/schedule/delete"
 
 
 @dataclasses.dataclass
-class AvailableParkingSpot:
-    """Available parking spot interface."""
+class ParkingSpot:
+    """Base parking spot interface."""
 
-    parking_id: int
-    floor: int
-    spot: int
+    floor: str
+    spot: str
     date: str
 
 
 @dataclasses.dataclass
-class ReservedParkingSpot:
+class AvailableParkingSpot(ParkingSpot):
+    """Available parking spot interface."""
+
+    parking_id: int
+
+
+@dataclasses.dataclass
+class ReservedParkingSpot(ParkingSpot):
     """Reserved parking spot interface."""
 
     schedule_id: int
-    floor: int
-    spot: int
-    date: str
 
 
 @dataclasses.dataclass
@@ -57,10 +59,21 @@ class ParkingSpotStatus:
 class SapirParkingApiClient:
     """Sapir parking API Client."""
 
-    def __init__(self, session: aiohttp.ClientSession, session_cookie: str) -> None:
+    def __init__(self, session: aiohttp.ClientSession) -> None:
         """Initiate Spair parking API Client."""
         self._session = session
-        self._session_headers = {"Cookie": f"session={session_cookie}"}
+        self._session_headers = {}
+
+    async def async_login(self, phone: str, license: str) -> dict:
+        """Login to Sapir parking API."""
+        form = aiohttp.FormData()
+        form.add_fields(("Phone", phone), ("License", license))
+        res = await self.api_wrapper("post", LOGIN_URL, data=form)
+        if res.status >= 200 and res.status < 300:
+            self._session_headers = {
+                "Cookie": f"session={res.cookies.get('session').value}"
+            }
+        return await res.json()
 
     async def async_get_parking_status(self, date: dt.datetime) -> ParkingSpotStatus:
         """Get parking status."""
@@ -166,7 +179,10 @@ class SapirParkingResponseParser:
             )
             data = content.find("button", {"class": "schedule-delete"})
             return ReservedParkingSpot(
-                int(data["data-schedule-id"]), floor.text, spot.text, data["data-date"]
+                schedule_id=int(data["data-schedule-id"]),
+                floor=floor.text,
+                spot=spot.text,
+                date=data["data-date"],
             )
         return {}
 
@@ -182,6 +198,11 @@ class SapirParkingResponseParser:
                 spot_id = spot["data-parking-id"]
                 spot_date = spot["data-date"]
                 spots[floor_id].append(
-                    AvailableParkingSpot(spot_id, floor_id, spot_name, spot_date)
+                    AvailableParkingSpot(
+                        parking_id=spot_id,
+                        floor=floor_id,
+                        spot=spot_name,
+                        date=spot_date,
+                    )
                 )
         return spots

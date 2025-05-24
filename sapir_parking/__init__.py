@@ -1,30 +1,26 @@
-""" Sapir Parking Custom Integration"""
+"""Sapir Parking Custom Integration."""
 
-import asyncio
 import dataclasses
-from datetime import datetime, timedelta
+from datetime import datetime
 import logging
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import SapirParkingApiClient
-from .const import CONF_SESSION_COOKIE, DOMAIN, PLATFORMS, STARTUP_MESSAGE, DATE_FORMAT
-
-SCAN_INTERVAL = timedelta(seconds=30)
+from .const import CONF_LICENSE, CONF_PHONE, DATE_FORMAT, DOMAIN, STARTUP_MESSAGE
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
 
 class ParkingSpotNotReservedException(Exception):
-    pass
+    """Exception raised when trying to release a parking spot that is not reserved."""
 
 
 class BadSapirParkingRequest(Exception):
-    pass
+    """Exception raised when a bad request is made to the Sapir Parking API."""
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
@@ -33,10 +29,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass.data.setdefault(DOMAIN, {})
         _LOGGER.debug(STARTUP_MESSAGE)
 
-    session_cookie = entry.data.get(CONF_SESSION_COOKIE)
+    phone_number = entry.data.get(CONF_PHONE)
+    license_plate = entry.data.get(CONF_LICENSE)
 
     session = async_get_clientsession(hass)
-    client = SapirParkingApiClient(session, session_cookie)
+    client = SapirParkingApiClient(session)
+    try:
+        await client.async_login(phone_number, license_plate)
+    except Exception as err:
+        raise ConfigEntryNotReady from err
 
     async def handle_get_available_spots(call):
         return await client.async_get_available_spots(get_date(call))
@@ -88,7 +89,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 
 def get_date(call):
     """Get datetime from call."""
-    date = call.data.get("Date", datetime.today())
+    date = call.data.get("date", datetime.today())
     if isinstance(date, str):
         date = datetime.strptime(date, DATE_FORMAT)
     return date
