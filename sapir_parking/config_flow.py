@@ -1,19 +1,26 @@
 """Config flow for Sapir Parking."""
 
+from datetime import datetime
+import logging
+
 import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .api import SapirParkingApiClient
-from .const import CONF_LICENSE, CONF_PHONE, DOMAIN, NAME
+from .const import CONF_LICENSE, CONF_PHONE, CONF_SESSION_COOKIE, DOMAIN, NAME
 
-CONFIG_SCHMA = vol.Schema(
+CONFIG_SCHMA_WITH_LOGIN = vol.Schema(
     {
         vol.Required(CONF_PHONE): str,
         vol.Required(CONF_LICENSE): str,
     }
 )
+
+CONFIG_SCHMA = vol.Schema({vol.Required(CONF_SESSION_COOKIE): str})
+
+_LOGGER: logging.Logger = logging.getLogger(__package__)
 
 
 class SapirParkingFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
@@ -30,14 +37,15 @@ class SapirParkingFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         """Handle a flow initialized by the user."""
         self._errors = {}
 
-        # Uncomment the next 2 lines if only a single instance of the integration is allowed:
+        # Only a single instance of the integration is allowed:
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
 
         if user_input is not None:
-            valid = await self._test_credentials(
-                user_input[CONF_PHONE], user_input[CONF_LICENSE]
-            )
+            # valid = await self._test_credentials_with_login(
+            #     user_input[CONF_PHONE], user_input[CONF_LICENSE]
+            # )
+            valid = await self._test_credentials(user_input[CONF_SESSION_COOKIE])
             if valid:
                 return self.async_create_entry(title=NAME, data=user_input)
 
@@ -55,13 +63,25 @@ class SapirParkingFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             errors=self._errors,
         )
 
-    async def _test_credentials(self, phone, license):
+    async def _test_credentials(self, session_cookie):
+        """Return true if credentials is valid."""
+        try:
+            session = async_create_clientsession(self.hass)
+            client = SapirParkingApiClient(session, session_cookie)
+            await client.async_get_parking_status(datetime.today())
+        except Exception as e:
+            _LOGGER.error("Error while testing credentials: %s", e)
+        else:
+            return True
+        return False
+
+    async def _test_credentials_with_login(self, phone, license):
         """Return true if credentials is valid."""
         try:
             session = async_create_clientsession(self.hass)
             client = SapirParkingApiClient(session)
             await client.async_login(phone, license)
-        except Exception:  # pylint: disable=broad-except
+        except Exception:  # pylint: disable=broad-except  # noqa: BLE001
             pass
         else:
             return True

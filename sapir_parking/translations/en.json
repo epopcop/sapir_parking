@@ -1,5 +1,19 @@
 {
     "title": "Sapir Parking",
+    "config": {
+        "step": {
+            "user": {
+                "title": "Configure Sapir Parking",
+                "description": "Please provide your Sapir Parking credentials.",
+                "data": {
+                    "session_cookie": {
+                        "name": "Session Cookie",
+                        "description": "Your Sapir Parking session cookie. You can find it in your browser's developer tools under the 'Application' tab, in the 'Cookies' section after you login."
+                    }
+                }
+            }
+        }
+    },
     "services": {
         "get_available_spots": {
             "description": "Lists all parking spots in the Sapir Parking system.",
@@ -41,6 +55,10 @@
                 "parking_id": {
                     "description": "The ID of the parking spot to reserve.",
                     "name": "Parking ID"
+                },
+                "preferred_spots": {
+                    "description": "A list of preferred parking spots to reserve.",
+                    "name": "Preferred Spots"
                 }
             },
             "name": "Reserve Parking Spot"

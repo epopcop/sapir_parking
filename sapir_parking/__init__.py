@@ -3,14 +3,14 @@
 import dataclasses
 from datetime import datetime
 import logging
+import random
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, SupportsResponse
-from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .api import SapirParkingApiClient
-from .const import CONF_LICENSE, CONF_PHONE, DATE_FORMAT, DOMAIN, STARTUP_MESSAGE
+from .api import ParkingSpot, SapirParkingApiClient
+from .const import DATE_FORMAT, DOMAIN, STARTUP_MESSAGE
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -23,21 +23,20 @@ class BadSapirParkingRequest(Exception):
     """Exception raised when a bad request is made to the Sapir Parking API."""
 
 
+class ParkingSpotAlreadyReservedException(Exception):
+    """Exception raised when trying to reserve a parking spot that is already reserved."""
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up this integration using UI."""
     if hass.data.get(DOMAIN) is None:
         hass.data.setdefault(DOMAIN, {})
         _LOGGER.debug(STARTUP_MESSAGE)
 
-    phone_number = entry.data.get(CONF_PHONE)
-    license_plate = entry.data.get(CONF_LICENSE)
+    session_cookie = entry.data.get("session_cookie")
 
     session = async_get_clientsession(hass)
-    client = SapirParkingApiClient(session)
-    try:
-        await client.async_login(phone_number, license_plate)
-    except Exception as err:
-        raise ConfigEntryNotReady from err
+    client = SapirParkingApiClient(session, session_cookie)
 
     async def handle_get_available_spots(call):
         return await client.async_get_available_spots(get_date(call))
@@ -46,10 +45,23 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         return dataclasses.asdict(await client.async_get_parking_status(get_date(call)))
 
     async def handle_async_reserve_spot(call):
-        parking_id = call.data.get("parking_id")
-        if not parking_id:
-            raise BadSapirParkingRequest("Missing parking id")
-        return await client.async_reserve_spot(get_date(call), parking_id)
+        parking_id = call.data.get("parking_id", None)
+        preferred_spots = call.data.get("preferred_spots", [])
+        date = get_date(call)
+        spot = None
+        if parking_id:
+            spot = await get_spot_by_id(client, parking_id, date)
+
+        if preferred_spots:
+            spot = await get_spot_by_preferred_spots(client, preferred_spots, date)
+
+        if not spot:
+            spot = await get_random_available_spot(client, date)
+
+        return {
+            **await client.async_reserve_spot(get_date(call), spot.parking_id),
+            **dataclasses.asdict(spot),
+        }
 
     async def handle_async_release_spot(call):
         spot = await client.async_get_parking_status(get_date(call))
@@ -93,3 +105,50 @@ def get_date(call):
     if isinstance(date, str):
         date = datetime.strptime(date, DATE_FORMAT)
     return date
+
+
+async def get_random_available_spot(client, date):
+    """Get a random available parking spot."""
+    status = await client.async_get_parking_status(date)
+    if status.reserved:
+        raise ParkingSpotAlreadyReservedException
+    if not status.available_spots:
+        raise BadSapirParkingRequest("No available parking spots found.")
+    _, floor = random.choice(list(status.available_spots.items()))
+    return random.choice(floor)
+
+
+async def get_spot_by_id(client, parking_id, date):
+    """Get a parking spot by its ID."""
+    status = await client.async_get_parking_status(date)
+    if status.reserved:
+        raise ParkingSpotAlreadyReservedException
+    for spots in status.available_spots.values():
+        for spot in spots:
+            if spot.parking_id == parking_id:
+                return spot
+    raise BadSapirParkingRequest(f"Parking ID {parking_id} not found.")
+
+
+async def get_spot_by_preferred_spots(client, preferred_spots, date):
+    """Get a parking spot based on preferred spots."""
+    if not isinstance(preferred_spots, list):
+        raise BadSapirParkingRequest("Preferred spots must be a list.")
+    preferred_spots = [
+        ParkingSpot(floor=spot["floor"], spot=spot["spot"], date=date)
+        for spot in preferred_spots
+    ]
+    status = await client.async_get_parking_status(date)
+    if status.reserved:
+        raise ParkingSpotAlreadyReservedException
+    for spot in preferred_spots:
+        if spot.floor in status.available_spots:
+            if spot := list(
+                filter(
+                    lambda x: x.spot == spot.spot,
+                    status.available_spots[spot.floor],
+                )
+            ):
+                return spot[0]
+
+    return None  # No preferred spot found, will fall back to random spot if needed.

@@ -28,9 +28,9 @@ REMOVE_SCHEDULE_URL = f"{BASE_URL}/schedule/delete"
 class ParkingSpot:
     """Base parking spot interface."""
 
-    floor: str
-    spot: str
-    date: str
+    floor: int
+    spot: int
+    date: dt.datetime | str
 
 
 @dataclasses.dataclass
@@ -59,10 +59,14 @@ class ParkingSpotStatus:
 class SapirParkingApiClient:
     """Sapir parking API Client."""
 
-    def __init__(self, session: aiohttp.ClientSession) -> None:
+    def __init__(
+        self, session: aiohttp.ClientSession, session_cookie: str | None = None
+    ) -> None:
         """Initiate Spair parking API Client."""
         self._session = session
         self._session_headers = {}
+        if session_cookie:
+            self._session_headers = {"Cookie": f"session={session_cookie}"}
 
     async def async_login(self, phone: str, license: str) -> dict:
         """Login to Sapir parking API."""
@@ -93,7 +97,7 @@ class SapirParkingApiClient:
         spots = await self.api_wrapper("get", BASE_URL, params=params)
         return SapirParkingResponseParser(spots).get_available_spots()
 
-    async def async_reserve_spot(self, date: dt.datetime, parking_id: str):
+    async def async_reserve_spot(self, date: dt.datetime, parking_id: int):
         """Reserve a parking spot."""
         form = aiohttp.FormData()
         form.add_fields(("ParkingID", parking_id), ("Date", date.strftime(DATE_FORMAT)))
@@ -105,7 +109,7 @@ class SapirParkingApiClient:
         )
         return await res.json()
 
-    async def async_release_spot(self, date: dt.datetime, schedule_id: str) -> dict:
+    async def async_release_spot(self, date: dt.datetime, schedule_id: int) -> dict:
         """Release a parking slot."""
         form = aiohttp.FormData()
         form.add_fields(
@@ -180,8 +184,8 @@ class SapirParkingResponseParser:
             data = content.find("button", {"class": "schedule-delete"})
             return ReservedParkingSpot(
                 schedule_id=int(data["data-schedule-id"]),
-                floor=floor.text,
-                spot=spot.text,
+                floor=int(floor.text),
+                spot=int(spot.text),
                 date=data["data-date"],
             )
         return {}
@@ -191,7 +195,7 @@ class SapirParkingResponseParser:
         content_element = self.soup.find("div", {"class": "list"})
         spots = {}
         for floor in content_element.find_all("li", {"class": "accordion-item"}):
-            floor_id = floor.find("div", {"class": "item-title"}).find("span").text
+            floor_id = int(floor.find("div", {"class": "item-title"}).find("span").text)
             spots[floor_id] = []
             for spot in floor.find_all("div", {"class": "parking-button"}):
                 spot_name = spot.text.strip()
@@ -199,9 +203,9 @@ class SapirParkingResponseParser:
                 spot_date = spot["data-date"]
                 spots[floor_id].append(
                     AvailableParkingSpot(
-                        parking_id=spot_id,
-                        floor=floor_id,
-                        spot=spot_name,
+                        parking_id=int(spot_id),
+                        floor=int(floor_id),
+                        spot=int(spot_name),
                         date=spot_date,
                     )
                 )

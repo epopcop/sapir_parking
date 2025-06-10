@@ -20,11 +20,17 @@ reserve_parking_spot:
       selector:
         date:
     parking_id:
-      required: true
+      required: false
       example: "123"
       selector:
         text:
           type: number
+    preferred_spots:
+      required: false
+      example: "- floor: -4\n  - spot: 12"
+      selector:
+        object:
+
 get_status:
   fields:
     date:
