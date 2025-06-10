@@ -7,5 +7,5 @@
 - [X] Add actions
 - [ ] Add a state to display what is reserved
 - [X] Replace session token with login flow
-- [ ] Add "Preferred spots" in the reserve spot action
+- [X] Add "Preferred spots" in the reserve spot action
 - [X] Remove template artifacts
