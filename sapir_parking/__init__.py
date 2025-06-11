@@ -10,7 +10,14 @@ from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import ParkingSpot, SapirParkingApiClient
-from .const import DATE_FORMAT, DOMAIN, STARTUP_MESSAGE
+from .const import (
+    DATE_FORMAT,
+    DOMAIN,
+    NOT_RESERVED_STATE,
+    PARKING_ENTITY,
+    RESERVED_STATE,
+    STARTUP_MESSAGE,
+)
 
 _LOGGER: logging.Logger = logging.getLogger(__package__)
 
@@ -42,24 +49,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         return await client.async_get_available_spots(get_date(call))
 
     async def handle_async_get_status(call):
-        return dataclasses.asdict(await client.async_get_parking_status(get_date(call)))
+        res = await client.async_get_parking_status(get_date(call))
+        if res.reserved:
+            hass.states.async_set(
+                PARKING_ENTITY, RESERVED_STATE, dataclasses.asdict(res.parking_info)
+            )
+        else:
+            hass.states.async_set(PARKING_ENTITY, NOT_RESERVED_STATE)
+        return dataclasses.asdict(res)
 
     async def handle_async_reserve_spot(call):
         parking_id = call.data.get("parking_id", None)
         preferred_spots = call.data.get("preferred_spots", [])
         date = get_date(call)
+
         spot = None
         if parking_id:
             spot = await get_spot_by_id(client, parking_id, date)
 
-        if preferred_spots:
+        elif preferred_spots:
             spot = await get_spot_by_preferred_spots(client, preferred_spots, date)
 
         if not spot:
             spot = await get_random_available_spot(client, date)
 
+        res = await client.async_reserve_spot(date, spot.parking_id)
+        if res.get("Success") != 1:
+            raise BadSapirParkingRequest("Failed to reserve spot.")
+        hass.states.async_set(PARKING_ENTITY, RESERVED_STATE, dataclasses.asdict(spot))
         return {
-            **await client.async_reserve_spot(get_date(call), spot.parking_id),
+            **res,
             **dataclasses.asdict(spot),
         }
 
@@ -67,10 +86,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         spot = await client.async_get_parking_status(get_date(call))
         if not spot.reserved:
             raise ParkingSpotNotReservedException
-        return await client.async_release_spot(
+        res = await client.async_release_spot(
             datetime.strptime(spot.parking_info.date, DATE_FORMAT),
             spot.parking_info.schedule_id,
         )
+        if res.get("Success") != 1:
+            raise BadSapirParkingRequest("Failed to release spot.")
+        hass.states.async_set(PARKING_ENTITY, NOT_RESERVED_STATE)
+        return res
 
     hass.services.async_register(
         DOMAIN,
