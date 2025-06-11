@@ -8,9 +8,11 @@ import random
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_time_change
 
-from .api import ParkingSpot, SapirParkingApiClient
+from .api import ParkingSpot, ParkingSpotStatus, SapirParkingApiClient
 from .const import (
+    CONF_SESSION_COOKIE,
     DATE_FORMAT,
     DOMAIN,
     NOT_RESERVED_STATE,
@@ -40,7 +42,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass.data.setdefault(DOMAIN, {})
         _LOGGER.debug(STARTUP_MESSAGE)
 
-    session_cookie = entry.data.get("session_cookie")
+    session_cookie = entry.data.get(CONF_SESSION_COOKIE)
 
     session = async_get_clientsession(hass)
     client = SapirParkingApiClient(session, session_cookie)
@@ -95,6 +97,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass.states.async_set(PARKING_ENTITY, NOT_RESERVED_STATE)
         return res
 
+    async def async_handle_daily_update(now):
+        """Handle daily update of parking status."""
+        _LOGGER.debug("Daily update of parking status triggered")
+        res = await client.async_get_parking_status(now.today())
+        set_parking_state_from_status(hass, res)
+        return dataclasses.asdict(res)
+
     hass.services.async_register(
         DOMAIN,
         "get_available_spots",
@@ -119,7 +128,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         handle_async_reserve_spot,
         supports_response=SupportsResponse.ONLY,
     )
+
+    async_track_time_change(hass, async_handle_daily_update, hour=0, minute=1, second=0)
+
+    set_parking_state_from_status(
+        hass, await client.async_get_parking_status(datetime.today())
+    )
+
     return True
+
+
+def set_parking_state_from_status(hass: HomeAssistant, status: ParkingSpotStatus):
+    """Set the parking state based on the status."""
+    if status.reserved:
+        hass.states.async_set(
+            PARKING_ENTITY, RESERVED_STATE, dataclasses.asdict(status.parking_info)
+        )
+    else:
+        hass.states.async_set(PARKING_ENTITY, NOT_RESERVED_STATE)
 
 
 def get_date(call):

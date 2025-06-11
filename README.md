@@ -9,4 +9,4 @@
 - [X] Replace session token with login flow
 - [X] Add "Preferred spots" in the reserve spot action
 - [X] Remove template artifacts
-- [ ] Update parking state after midnight
+- [X] Update parking state after midnight
