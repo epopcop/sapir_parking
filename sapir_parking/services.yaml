@@ -30,7 +30,6 @@ reserve_parking_spot:
       example: "- floor: -4\n  - spot: 12"
       selector:
         object:
-
 get_status:
   fields:
     date:
