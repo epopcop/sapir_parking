@@ -1,4 +1,4 @@
-"""Sample API Client."""
+"""Sapir Parking API Client."""
 
 import dataclasses
 import datetime as dt
