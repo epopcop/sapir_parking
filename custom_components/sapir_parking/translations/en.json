@@ -4,64 +4,166 @@
         "step": {
             "user": {
                 "title": "Configure Sapir Parking",
-                "description": "Please provide your Sapir Parking credentials.",
+                "description": "How do you want to sign in to Sapir Parking?",
+                "menu_options": {
+                    "login": "Phone number and license plate",
+                    "cookie": "Session cookie"
+                }
+            },
+            "login": {
+                "title": "Sign in with phone number",
+                "description": "Use the same details you use to sign in on the Sapir Parking website. The integration signs in again by itself when the session expires.",
                 "data": {
-                    "session_cookie": {
-                        "name": "Session Cookie",
-                        "description": "Your Sapir Parking session cookie. You can find it in your browser's developer tools under the 'Application' tab, in the 'Cookies' section after you login."
-                    }
+                    "phone": "Phone number",
+                    "license": "License plate",
+                    "flaresolverr_url": "FlareSolverr URL"
+                },
+                "data_description": {
+                    "phone": "The phone number registered with Sapir Parking.",
+                    "license": "The car license plate registered with Sapir Parking.",
+                    "flaresolverr_url": "Optional. Address of a FlareSolverr instance, for example http://192.168.1.10:8191. Used only when Cloudflare blocks a request."
+                }
+            },
+            "cookie": {
+                "title": "Sign in with a session cookie",
+                "description": "Sign in on the Sapir Parking website, then copy the value of the `session` cookie from your browser's developer tools (Application → Cookies). You'll need to do this again when the cookie expires.",
+                "data": {
+                    "session_cookie": "Session cookie",
+                    "flaresolverr_url": "FlareSolverr URL"
+                },
+                "data_description": {
+                    "session_cookie": "The value of the `session` cookie for sapirparking.com.",
+                    "flaresolverr_url": "Optional. Address of a FlareSolverr instance, for example http://192.168.1.10:8191. Used only when Cloudflare blocks a request."
+                }
+            },
+            "reauth_confirm": {
+                "title": "Sign in to Sapir Parking again",
+                "description": "Your Sapir Parking session expired or the saved details stopped working. Enter them again.",
+                "data": {
+                    "session_cookie": "Session cookie",
+                    "phone": "Phone number",
+                    "license": "License plate"
+                }
+            }
+        },
+        "error": {
+            "invalid_auth": "Couldn't sign in with these details.",
+            "cannot_connect": "Couldn't connect to Sapir Parking.",
+            "cloudflare_challenge": "Cloudflare blocked the request. Add a FlareSolverr URL to get past it.",
+            "flaresolverr_unreachable": "Couldn't reach FlareSolverr at this address.",
+            "invalid_url": "This isn't a valid URL.",
+            "unknown": "Unexpected error. Check the logs for details."
+        },
+        "abort": {
+            "already_configured": "Sapir Parking is already set up.",
+            "single_instance_allowed": "Sapir Parking is already set up.",
+            "reauth_successful": "Signed in again successfully."
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "title": "Sapir Parking options",
+                "data": {
+                    "flaresolverr_url": "FlareSolverr URL"
+                },
+                "data_description": {
+                    "flaresolverr_url": "Address of a FlareSolverr instance, for example http://192.168.1.10:8191. Leave empty to turn it off."
+                }
+            }
+        },
+        "error": {
+            "invalid_auth": "Couldn't sign in with the saved details.",
+            "cannot_connect": "Couldn't connect to Sapir Parking.",
+            "cloudflare_challenge": "Cloudflare still blocked the request through this FlareSolverr.",
+            "flaresolverr_unreachable": "Couldn't reach FlareSolverr at this address.",
+            "invalid_url": "This isn't a valid URL.",
+            "unknown": "Unexpected error. Check the logs for details."
+        }
+    },
+    "entity": {
+        "sensor": {
+            "parking_today": {
+                "name": "Parking today",
+                "state": {
+                    "reserved": "Reserved",
+                    "not_reserved": "Not reserved"
+                }
+            },
+            "parking_tomorrow": {
+                "name": "Parking tomorrow",
+                "state": {
+                    "reserved": "Reserved",
+                    "not_reserved": "Not reserved"
                 }
             }
         }
     },
+    "exceptions": {
+        "not_loaded": {
+            "message": "Sapir Parking isn't set up or isn't loaded."
+        },
+        "already_reserved": {
+            "message": "A parking spot is already reserved for {date}."
+        },
+        "not_reserved": {
+            "message": "No parking spot is reserved for {date}."
+        },
+        "spot_not_found": {
+            "message": "Parking spot {parking_id} isn't available."
+        },
+        "no_spots_available": {
+            "message": "No parking spots are available."
+        }
+    },
     "services": {
         "get_available_spots": {
-            "description": "Lists all parking spots in the Sapir Parking system.",
+            "name": "Get available spots",
+            "description": "Lists the free parking spots, grouped by floor.",
             "fields": {
                 "date": {
-                    "description": "Return available parking spots in a specific date, only supports today and tomorrow.",
-                    "name": "Date"
+                    "name": "Date",
+                    "description": "The date to check. Defaults to today. Only today and tomorrow are supported."
                 }
-            },
-            "name": "Get Available Spots"
+            }
         },
         "get_status": {
-            "description": "Get the current parking status.",
+            "name": "Get status",
+            "description": "Gets the reservation status and free spots for a date.",
             "fields": {
                 "date": {
-                    "description": "Return status of a specific date, only supports today and tomorrow.",
-                    "name": "Date"
+                    "name": "Date",
+                    "description": "The date to check. Defaults to today. Only today and tomorrow are supported."
                 }
-            },
-            "name": "Get Status"
+            }
         },
         "release_parking_spot": {
-            "description": "Release the reserved parking spot.",
+            "name": "Release parking spot",
+            "description": "Releases the reserved parking spot.",
             "fields": {
                 "date": {
-                    "description": "Release the reseved parkingn spot on a specific date, only supports today and tomorrow.",
-                    "name": "Date"
+                    "name": "Date",
+                    "description": "The date to release the spot for. Defaults to today. Only today and tomorrow are supported."
                 }
-            },
-            "name": "Release Parking Spot"
+            }
         },
         "reserve_parking_spot": {
-            "description": "Reserve a parking spot.",
+            "name": "Reserve parking spot",
+            "description": "Reserves a parking spot. Tries the parking ID first, then the preferred spots in order, then picks a random free spot.",
             "fields": {
                 "date": {
-                    "description": "Reserve a parking spot on a specific date, only supports today and tomorrow.",
-                    "name": "Date"
+                    "name": "Date",
+                    "description": "The date to reserve for. Defaults to today. Only today and tomorrow are supported."
                 },
                 "parking_id": {
-                    "description": "The ID of the parking spot to reserve.",
-                    "name": "Parking ID"
+                    "name": "Parking ID",
+                    "description": "The ID of a specific spot to reserve. If it isn't free, the action fails."
                 },
                 "preferred_spots": {
-                    "description": "A list of preferred parking spots to reserve.",
-                    "name": "Preferred Spots"
+                    "name": "Preferred spots",
+                    "description": "A list of floor/spot pairs to try in order. If none are free, a random spot is reserved."
                 }
-            },
-            "name": "Reserve Parking Spot"
+            }
         }
     }
 }

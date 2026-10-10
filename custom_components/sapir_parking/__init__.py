@@ -1,203 +1,263 @@
 """Sapir Parking Custom Integration."""
 
+from __future__ import annotations
+
 import dataclasses
-from datetime import datetime
-import logging
+import datetime as dt
 import random
 
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, SupportsResponse
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_track_time_change
+import aiohttp
+import voluptuous as vol
 
-from .api import ParkingSpot, ParkingSpotStatus, SapirParkingApiClient
+from homeassistant.config_entries import ConfigEntryState
+from homeassistant.core import (
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.typing import ConfigType
+from homeassistant.util import dt as dt_util
+
+from .api import (
+    AvailableParkingSpot,
+    ParkingSpotStatus,
+    SapirParkingApiClient,
+    SapirParkingError,
+    available_spots_as_dict,
+)
 from .const import (
+    AUTH_METHOD_COOKIE,
+    AUTH_METHOD_LOGIN,
+    CONF_AUTH_METHOD,
+    CONF_FLARESOLVERR_URL,
+    CONF_LICENSE,
+    CONF_PHONE,
     CONF_SESSION_COOKIE,
-    DATE_FORMAT,
     DOMAIN,
-    NOT_RESERVED_STATE,
-    PARKING_ENTITY,
-    RESERVED_STATE,
-    STARTUP_MESSAGE,
+    PLATFORMS,
+)
+from .coordinator import SapirParkingConfigEntry, SapirParkingCoordinator
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+ATTR_DATE = "date"
+ATTR_PARKING_ID = "parking_id"
+ATTR_PREFERRED_SPOTS = "preferred_spots"
+
+DATE_SCHEMA = vol.Schema({vol.Optional(ATTR_DATE): cv.date})
+RESERVE_SCHEMA = DATE_SCHEMA.extend(
+    {
+        vol.Optional(ATTR_PARKING_ID): vol.Coerce(int),
+        vol.Optional(ATTR_PREFERRED_SPOTS): vol.All(
+            cv.ensure_list,
+            [
+                vol.Schema(
+                    {
+                        vol.Required("floor"): vol.Coerce(int),
+                        vol.Required("spot"): vol.Coerce(int),
+                    }
+                )
+            ],
+        ),
+    }
 )
 
-_LOGGER: logging.Logger = logging.getLogger(__package__)
 
-
-class ParkingSpotNotReservedException(Exception):
-    """Exception raised when trying to release a parking spot that is not reserved."""
-
-
-class BadSapirParkingRequest(Exception):
-    """Exception raised when a bad request is made to the Sapir Parking API."""
-
-
-class ParkingSpotAlreadyReservedException(Exception):
-    """Exception raised when trying to reserve a parking spot that is already reserved."""
-
-
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
-    """Set up this integration using UI."""
-    if hass.data.get(DOMAIN) is None:
-        hass.data.setdefault(DOMAIN, {})
-        _LOGGER.debug(STARTUP_MESSAGE)
-
-    session_cookie = entry.data.get(CONF_SESSION_COOKIE)
-
-    session = async_get_clientsession(hass)
-    client = SapirParkingApiClient(session, session_cookie)
-
-    async def handle_get_available_spots(call):
-        return await client.async_get_available_spots(get_date(call))
-
-    async def handle_async_get_status(call):
-        res = await client.async_get_parking_status(get_date(call))
-        if res.reserved:
-            hass.states.async_set(
-                PARKING_ENTITY, RESERVED_STATE, dataclasses.asdict(res.parking_info)
-            )
-        else:
-            hass.states.async_set(PARKING_ENTITY, NOT_RESERVED_STATE)
-        return dataclasses.asdict(res)
-
-    async def handle_async_reserve_spot(call):
-        parking_id = call.data.get("parking_id", None)
-        preferred_spots = call.data.get("preferred_spots", [])
-        date = get_date(call)
-
-        spot = None
-        if parking_id:
-            spot = await get_spot_by_id(client, parking_id, date)
-
-        elif preferred_spots:
-            spot = await get_spot_by_preferred_spots(client, preferred_spots, date)
-
-        if not spot:
-            spot = await get_random_available_spot(client, date)
-
-        res = await client.async_reserve_spot(date, spot.parking_id)
-        if res.get("Success") != 1:
-            raise BadSapirParkingRequest("Failed to reserve spot.")
-        hass.states.async_set(PARKING_ENTITY, RESERVED_STATE, dataclasses.asdict(spot))
-        return {
-            **res,
-            **dataclasses.asdict(spot),
-        }
-
-    async def handle_async_release_spot(call):
-        spot = await client.async_get_parking_status(get_date(call))
-        if not spot.reserved:
-            raise ParkingSpotNotReservedException
-        res = await client.async_release_spot(
-            datetime.strptime(spot.parking_info.date, DATE_FORMAT),
-            spot.parking_info.schedule_id,
+def create_client(
+    hass: HomeAssistant, data: dict, flaresolverr_url: str | None
+) -> SapirParkingApiClient:
+    """Create an API client from config entry data."""
+    # Cookies are managed by the client itself, so keep them out of the jar.
+    session = async_create_clientsession(hass, cookie_jar=aiohttp.DummyCookieJar())
+    if data.get(CONF_AUTH_METHOD, AUTH_METHOD_COOKIE) == AUTH_METHOD_LOGIN:
+        return SapirParkingApiClient(
+            session,
+            phone=data[CONF_PHONE],
+            license_number=data[CONF_LICENSE],
+            flaresolverr_url=flaresolverr_url,
         )
-        if res.get("Success") != 1:
-            raise BadSapirParkingRequest("Failed to release spot.")
-        hass.states.async_set(PARKING_ENTITY, NOT_RESERVED_STATE)
-        return res
+    return SapirParkingApiClient(
+        session,
+        session_cookie=data[CONF_SESSION_COOKIE],
+        flaresolverr_url=flaresolverr_url,
+    )
 
-    async def async_handle_daily_update(now):
-        """Handle daily update of parking status."""
-        _LOGGER.debug("Daily update of parking status triggered")
-        res = await client.async_get_parking_status(now.today())
-        set_parking_state_from_status(hass, res)
-        return dataclasses.asdict(res)
+
+def get_flaresolverr_url(entry: SapirParkingConfigEntry) -> str | None:
+    """Return the FlareSolverr URL, with options taking precedence over data."""
+    if CONF_FLARESOLVERR_URL in entry.options:
+        return entry.options[CONF_FLARESOLVERR_URL] or None
+    return entry.data.get(CONF_FLARESOLVERR_URL) or None
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the integration's actions."""
 
     hass.services.async_register(
         DOMAIN,
         "get_available_spots",
-        handle_get_available_spots,
+        _handle_get_available_spots,
+        schema=DATE_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,
         "get_status",
-        handle_async_get_status,
-        supports_response=SupportsResponse.ONLY,
-    )
-    hass.services.async_register(
-        DOMAIN,
-        "release_parking_spot",
-        handle_async_release_spot,
+        _handle_get_status,
+        schema=DATE_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
     hass.services.async_register(
         DOMAIN,
         "reserve_parking_spot",
-        handle_async_reserve_spot,
-        supports_response=SupportsResponse.ONLY,
+        _handle_reserve_spot,
+        schema=RESERVE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
-
-    async_track_time_change(hass, async_handle_daily_update, hour=0, minute=1, second=0)
-
-    set_parking_state_from_status(
-        hass, await client.async_get_parking_status(datetime.today())
+    hass.services.async_register(
+        DOMAIN,
+        "release_parking_spot",
+        _handle_release_spot,
+        schema=DATE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
-
     return True
 
 
-def set_parking_state_from_status(hass: HomeAssistant, status: ParkingSpotStatus):
-    """Set the parking state based on the status."""
+async def async_setup_entry(hass: HomeAssistant, entry: SapirParkingConfigEntry) -> bool:
+    """Set up this integration using UI."""
+    client = create_client(hass, dict(entry.data), get_flaresolverr_url(entry))
+    coordinator = SapirParkingCoordinator(hass, entry, client)
+    await coordinator.async_config_entry_first_refresh()
+    entry.runtime_data = coordinator
+
+    async def _midnight_refresh(now: dt.datetime) -> None:
+        await coordinator.async_request_refresh()
+
+    entry.async_on_unload(
+        async_track_time_change(hass, _midnight_refresh, hour=0, minute=1, second=0)
+    )
+    entry.async_on_unload(entry.add_update_listener(_async_reload_entry))
+
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    return True
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: SapirParkingConfigEntry) -> bool:
+    """Unload a config entry."""
+    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def _async_reload_entry(hass: HomeAssistant, entry: SapirParkingConfigEntry) -> None:
+    """Reload the entry when its options change."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
+def _get_coordinator(hass: HomeAssistant) -> SapirParkingCoordinator:
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        if entry.state is ConfigEntryState.LOADED:
+            return entry.runtime_data
+    raise ServiceValidationError(translation_domain=DOMAIN, translation_key="not_loaded")
+
+
+def _get_date(call: ServiceCall) -> dt.date:
+    return call.data.get(ATTR_DATE) or dt_util.now().date()
+
+
+async def _get_status(
+    coordinator: SapirParkingCoordinator, date: dt.date
+) -> ParkingSpotStatus:
+    try:
+        return await coordinator.client.async_get_parking_status(date)
+    except SapirParkingError as err:
+        raise HomeAssistantError(str(err)) from err
+
+
+async def _handle_get_available_spots(call: ServiceCall) -> ServiceResponse:
+    coordinator = _get_coordinator(call.hass)
+    status = await _get_status(coordinator, _get_date(call))
+    return available_spots_as_dict(status.available_spots)
+
+
+async def _handle_get_status(call: ServiceCall) -> ServiceResponse:
+    coordinator = _get_coordinator(call.hass)
+    status = await _get_status(coordinator, _get_date(call))
+    return status.as_dict()
+
+
+async def _handle_reserve_spot(call: ServiceCall) -> ServiceResponse:
+    coordinator = _get_coordinator(call.hass)
+    date = _get_date(call)
+    status = await _get_status(coordinator, date)
     if status.reserved:
-        hass.states.async_set(
-            PARKING_ENTITY, RESERVED_STATE, dataclasses.asdict(status.parking_info)
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="already_reserved",
+            translation_placeholders={"date": date.isoformat()},
         )
-    else:
-        hass.states.async_set(PARKING_ENTITY, NOT_RESERVED_STATE)
+
+    spot = _choose_spot(
+        status,
+        call.data.get(ATTR_PARKING_ID),
+        call.data.get(ATTR_PREFERRED_SPOTS, []),
+    )
+    try:
+        result = await coordinator.client.async_reserve_spot(date, spot.parking_id)
+    except SapirParkingError as err:
+        raise HomeAssistantError(f"Failed to reserve spot: {err}") from err
+    await coordinator.async_request_refresh()
+    return {**result, **dataclasses.asdict(spot)}
 
 
-def get_date(call):
-    """Get datetime from call."""
-    date = call.data.get("date", datetime.today())
-    if isinstance(date, str):
-        date = datetime.strptime(date, DATE_FORMAT)
-    return date
+async def _handle_release_spot(call: ServiceCall) -> ServiceResponse:
+    coordinator = _get_coordinator(call.hass)
+    date = _get_date(call)
+    status = await _get_status(coordinator, date)
+    if not status.reserved or not status.parking_info:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="not_reserved",
+            translation_placeholders={"date": date.isoformat()},
+        )
+    try:
+        result = await coordinator.client.async_release_spot(
+            date, status.parking_info.schedule_id
+        )
+    except SapirParkingError as err:
+        raise HomeAssistantError(f"Failed to release spot: {err}") from err
+    await coordinator.async_request_refresh()
+    return result
 
 
-async def get_random_available_spot(client, date):
-    """Get a random available parking spot."""
-    status = await client.async_get_parking_status(date)
-    if status.reserved:
-        raise ParkingSpotAlreadyReservedException
-    if not status.available_spots:
-        raise BadSapirParkingRequest("No available parking spots found.")
-    _, floor = random.choice(list(status.available_spots.items()))
-    return random.choice(floor)
-
-
-async def get_spot_by_id(client, parking_id, date):
-    """Get a parking spot by its ID."""
-    status = await client.async_get_parking_status(date)
-    if status.reserved:
-        raise ParkingSpotAlreadyReservedException
-    for spots in status.available_spots.values():
-        for spot in spots:
+def _choose_spot(
+    status: ParkingSpotStatus,
+    parking_id: int | None,
+    preferred_spots: list[dict[str, int]],
+) -> AvailableParkingSpot:
+    """Pick a spot: by id, else the first free preferred spot, else at random."""
+    available = status.all_available_spots
+    if parking_id is not None:
+        for spot in available:
             if spot.parking_id == parking_id:
                 return spot
-    raise BadSapirParkingRequest(f"Parking ID {parking_id} not found.")
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="spot_not_found",
+            translation_placeholders={"parking_id": str(parking_id)},
+        )
 
+    for preferred in preferred_spots:
+        for spot in available:
+            if spot.floor == preferred["floor"] and spot.spot == preferred["spot"]:
+                return spot
 
-async def get_spot_by_preferred_spots(client, preferred_spots, date):
-    """Get a parking spot based on preferred spots."""
-    if not isinstance(preferred_spots, list):
-        raise BadSapirParkingRequest("Preferred spots must be a list.")
-    preferred_spots = [
-        ParkingSpot(floor=spot["floor"], spot=spot["spot"], date=date)
-        for spot in preferred_spots
-    ]
-    status = await client.async_get_parking_status(date)
-    if status.reserved:
-        raise ParkingSpotAlreadyReservedException
-    for spot in preferred_spots:
-        if spot.floor in status.available_spots:
-            if spot := list(
-                filter(
-                    lambda x: x.spot == spot.spot,
-                    status.available_spots[spot.floor],
-                )
-            ):
-                return spot[0]
-
-    return None  # No preferred spot found, will fall back to random spot if needed.
+    if not available:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN, translation_key="no_spots_available"
+        )
+    return random.choice(available)

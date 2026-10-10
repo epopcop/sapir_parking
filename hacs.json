@@ -1,5 +1,5 @@
 {
-    "name": "sapir_parking",
+    "name": "Sapir Parking",
     "content_in_root": false,
-    "homeassistant": "2023.10.0"
+    "homeassistant": "2024.11.0"
 }

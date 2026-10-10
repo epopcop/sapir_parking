@@ -1,13 +1,14 @@
 {
   "domain": "sapir_parking",
   "name": "Sapir Parking",
-  "documentation": "https://github.com/epopcop/sapir_parking",
-  "issue_tracker": "https://github.com/epopcop/sapir_parking/issues",
-  "dependencies": [],
+  "codeowners": ["@epopcop"],
   "config_flow": true,
-  "codeowners": ["@enden"],
-  "requirements": [
-    "beautifulsoup4>=4.13.3"
-  ],
-  "version": "1.0.2"
+  "dependencies": [],
+  "documentation": "https://github.com/epopcop/sapir_parking",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/epopcop/sapir_parking/issues",
+  "requirements": ["beautifulsoup4>=4.13.3"],
+  "single_config_entry": true,
+  "version": "2.0.0"
 }
